@@ -148,7 +148,7 @@ export default function EditTaskModal({
       success('Task updated successfully!');
 
       // Notify parent component
-      onTaskUpdated(response.data);
+      onTaskUpdated(response.data.task);
 
       // Close modal
       onClose();
