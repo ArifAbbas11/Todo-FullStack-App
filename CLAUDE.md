@@ -14,6 +14,89 @@ You are an expert AI assistant specializing in Spec-Driven Development (SDD). Yo
 - Architectural Decision Record (ADR) suggestions are made intelligently for significant decisions.
 - All changes are small, testable, and reference code precisely.
 
+## Project: Todo Full-Stack Web Application (Phase II)
+
+### Project Overview
+You are building a multi-user Todo web application with persistent storage. This project transforms a console application into a modern web application using the Agentic Dev Stack workflow: Write spec → Generate plan → Break into tasks → Implement via Claude Code.
+
+**Key Objectives:**
+- Implement all Basic Level features as a web application
+- Create RESTful API endpoints
+- Build responsive frontend interface
+- Store data in Neon Serverless PostgreSQL database
+- Implement user authentication with Better Auth and JWT tokens
+
+### Technology Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Next.js 16+ (App Router) |
+| Backend | Python FastAPI |
+| ORM | SQLModel |
+| Database | Neon Serverless PostgreSQL |
+| Authentication | Better Auth (JWT tokens) |
+| Development | Claude Code + Spec-Kit Plus |
+
+### Agent Usage Guidelines
+
+For this project, you MUST use specialized agents for their respective domains:
+
+1. **Authentication Tasks** → Use `auth-security` agent
+   - User signup/signin implementation
+   - JWT token generation and verification
+   - Better Auth integration
+   - Password hashing and validation
+   - Authentication middleware
+   - Security reviews of auth code
+
+2. **Frontend Development** → Use `nextjs-ui-builder` agent
+   - Next.js pages and components
+   - Responsive UI layouts
+   - Forms and user interactions
+   - Client-side routing
+   - Frontend state management
+
+3. **Database Operations** → Use `neon-db-manager` agent
+   - Database schema design
+   - Table creation and migrations
+   - Query optimization
+   - Connection management
+   - Database health monitoring
+
+4. **Backend API Development** → Use `fastapi-backend-dev` agent
+   - FastAPI endpoint implementation
+   - Request/response validation
+   - SQLModel ORM operations
+   - Error handling
+   - API documentation
+
+### Authentication Architecture
+
+**JWT Token Flow:**
+1. User logs in on Frontend → Better Auth creates session and issues JWT token
+2. Frontend makes API call → Includes JWT token in `Authorization: Bearer <token>` header
+3. Backend receives request → Extracts token from header, verifies signature using shared secret
+4. Backend identifies user → Decodes token to get user ID, email, etc.
+5. Backend filters data → Returns only tasks belonging to that user
+
+**Security Requirements:**
+- Never hardcode JWT secrets (use `.env`)
+- Validate JWT signature on every protected endpoint
+- Match user ID from token with user ID in request URL
+- Implement proper error handling for invalid/expired tokens
+- Use HTTPS in production
+
+### Development Workflow
+
+Follow the Spec-Kit Plus workflow for all features:
+1. **Specify** (`/sp.specify`) - Write detailed feature specification
+2. **Plan** (`/sp.plan`) - Generate architectural plan
+3. **Tasks** (`/sp.tasks`) - Break down into testable tasks
+4. **Implement** - Execute tasks using appropriate specialized agents
+5. **Document** - Create PHRs and ADRs as needed
+
+**No manual coding allowed** - all implementation must go through Claude Code and the appropriate specialized agents.
+
 ## Core Guarantees (Product Promise)
 
 - Record every user input verbatim in a Prompt History Record (PHR) after every user message. Do not truncate; preserve full multiline input.
@@ -208,3 +291,12 @@ Wait for consent; never auto-create ADRs. Group related decisions (stacks, authe
 
 ## Code Standards
 See `.specify/memory/constitution.md` for code quality, testing, performance, security, and architecture principles.
+
+## Active Technologies
+- Neon Serverless PostgreSQL (cloud-hosted, connection pooling enabled) (001-todo-web-app)
+- Python 3.11+ + FastAPI 0.109+, SQLModel 0.0.14+, psycopg2-binary 2.9+, python-jose 3.3+ (JWT), passlib 1.7+ (bcrypt), Alembic 1.13+ (migrations) (002-backend-api)
+- Python 3.11+ (backend), TypeScript/JavaScript (frontend Next.js 16+) + Better Auth (JWT), FastAPI 0.109+, python-jose 3.3+ (JWT verification), passlib 1.7+ (bcrypt), SQLModel 0.0.14+, psycopg2-binary 2.9+ (003-003-auth-security)
+- Neon Serverless PostgreSQL (cloud-hosted, connection pooling enabled) - already configured from features 001 and 002 (003-003-auth-security)
+
+## Recent Changes
+- 001-todo-web-app: Added Neon Serverless PostgreSQL (cloud-hosted, connection pooling enabled)

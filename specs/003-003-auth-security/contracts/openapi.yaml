@@ -1,0 +1,784 @@
+openapi: 3.0.3
+info:
+  title: Todo App Authentication & Security API
+  description: |
+    JWT-based authentication and authorization API for the Todo application.
+
+    This API provides secure user registration, login, and JWT token management
+    for multi-user task management with database-level user isolation.
+
+    **Authentication Flow**:
+    1. User registers with email and password (POST /api/auth/signup)
+    2. User logs in with credentials (POST /api/auth/signin)
+    3. Backend returns JWT token with 7-day expiration
+    4. Frontend attaches token to all API requests (Authorization: Bearer <token>)
+    5. Backend verifies token and extracts user_id for database queries
+
+    **Security Features**:
+    - Password hashing with bcrypt (cost factor 10)
+    - JWT tokens signed with HS256 algorithm
+    - Token expiration after 7 days
+    - User isolation at database query level
+    - 404 (not 403) for ownership violations
+  version: 1.0.0
+  contact:
+    name: Todo App Team
+    email: support@todoapp.example.com
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.todoapp.example.com
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: User registration, login, and JWT token management
+  - name: Tasks
+    description: Task CRUD operations with JWT authentication
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/auth/signup:
+    post:
+      tags:
+        - Authentication
+      summary: Register new user
+      description: |
+        Create a new user account with email and password.
+
+        **Validation Rules**:
+        - Email must be valid format (RFC 5322)
+        - Email must be unique (not already registered)
+        - Password must be at least 8 characters
+
+        **Security**:
+        - Password is hashed with bcrypt (cost factor 10) before storage
+        - Plain text password is never stored in database
+      operationId: signup
+      security: []  # No authentication required for signup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+            examples:
+              valid:
+                summary: Valid signup request
+                value:
+                  email: user@example.com
+                  password: securepassword123
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+              examples:
+                success:
+                  summary: Successful signup
+                  value:
+                    id: 550e8400-e29b-41d4-a716-446655440000
+                    email: user@example.com
+                    created_at: '2026-01-15T10:30:00Z'
+        '400':
+          description: Bad request - validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_email:
+                  summary: Invalid email format
+                  value:
+                    code: INVALID_EMAIL
+                    message: Invalid email format
+                    details: {}
+                weak_password:
+                  summary: Password too short
+                  value:
+                    code: WEAK_PASSWORD
+                    message: Password must be at least 8 characters
+                    details: {}
+                duplicate_email:
+                  summary: Email already registered
+                  value:
+                    code: DUPLICATE_EMAIL
+                    message: Email already registered
+                    details: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/signin:
+    post:
+      tags:
+        - Authentication
+      summary: Login user
+      description: |
+        Authenticate user with email and password, return JWT token.
+
+        **Authentication Process**:
+        1. Verify email exists in database
+        2. Verify password matches hashed password (bcrypt)
+        3. Generate JWT token with user_id and email claims
+        4. Sign token with HS256 algorithm using JWT_SECRET
+        5. Set expiration to 7 days from now
+        6. Return token to frontend
+
+        **Token Usage**:
+        - Frontend stores token in localStorage or httpOnly cookie
+        - Frontend attaches token to all API requests in Authorization header
+        - Token format: `Authorization: Bearer <token>`
+      operationId: signin
+      security: []  # No authentication required for signin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SigninRequest'
+            examples:
+              valid:
+                summary: Valid signin request
+                value:
+                  email: user@example.com
+                  password: securepassword123
+      responses:
+        '200':
+          description: Login successful, JWT token returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              examples:
+                success:
+                  summary: Successful login
+                  value:
+                    access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwiZW1haWwiOiJ1c2VyQGV4YW1wbGUuY29tIiwiZXhwIjoxNzM3ODQ5NjAwLCJpYXQiOjE3MzcyNDQ4MDB9.signature_here
+                    token_type: bearer
+                    expires_in: 604800
+        '401':
+          description: Unauthorized - invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_credentials:
+                  summary: Invalid email or password
+                  value:
+                    code: INVALID_CREDENTIALS
+                    message: Invalid email or password
+                    details: {}
+        '429':
+          description: Too many requests - rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                rate_limit:
+                  summary: Rate limit exceeded
+                  value:
+                    code: RATE_LIMIT_EXCEEDED
+                    message: Too many login attempts. Please try again later.
+                    details:
+                      retry_after: 60
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/tasks:
+    get:
+      tags:
+        - Tasks
+      summary: List user's tasks
+      description: |
+        Get all tasks for the authenticated user.
+
+        **User Isolation**:
+        - Only returns tasks where user_id matches authenticated user
+        - Database query includes: `WHERE user_id = {authenticated_user_id}`
+        - User cannot see other users' tasks
+
+        **Authentication**:
+        - Requires valid JWT token in Authorization header
+        - Token must not be expired
+        - Returns 401 if token is missing, invalid, or expired
+      operationId: listTasks
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of user's tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+              examples:
+                success:
+                  summary: User's tasks
+                  value:
+                    tasks:
+                      - id: 123e4567-e89b-12d3-a456-426614174000
+                        user_id: 550e8400-e29b-41d4-a716-446655440000
+                        title: Buy groceries
+                        description: Milk, eggs, bread
+                        is_completed: false
+                        created_at: '2026-01-15T10:00:00Z'
+                        updated_at: '2026-01-15T10:00:00Z'
+                      - id: 123e4567-e89b-12d3-a456-426614174001
+                        user_id: 550e8400-e29b-41d4-a716-446655440000
+                        title: Finish project
+                        description: null
+                        is_completed: true
+                        created_at: '2026-01-14T15:30:00Z'
+                        updated_at: '2026-01-15T09:00:00Z'
+                    count: 2
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - Tasks
+      summary: Create new task
+      description: |
+        Create a new task for the authenticated user.
+
+        **User Isolation**:
+        - Task is automatically assigned to authenticated user
+        - user_id is set from JWT token, not from request body
+        - User cannot create tasks for other users
+
+        **Validation**:
+        - Title is required and cannot be empty
+        - Title max length: 500 characters
+        - Description max length: 5000 characters
+      operationId: createTask
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+            examples:
+              valid:
+                summary: Valid task creation
+                value:
+                  title: Buy groceries
+                  description: Milk, eggs, bread
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+              examples:
+                success:
+                  summary: Task created
+                  value:
+                    id: 123e4567-e89b-12d3-a456-426614174000
+                    user_id: 550e8400-e29b-41d4-a716-446655440000
+                    title: Buy groceries
+                    description: Milk, eggs, bread
+                    is_completed: false
+                    created_at: '2026-01-15T10:00:00Z'
+                    updated_at: '2026-01-15T10:00:00Z'
+        '400':
+          description: Bad request - validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                empty_title:
+                  summary: Empty title
+                  value:
+                    code: INVALID_INPUT
+                    message: Title cannot be empty
+                    details: {}
+                title_too_long:
+                  summary: Title too long
+                  value:
+                    code: INVALID_INPUT
+                    message: Title must be 500 characters or less
+                    details: {}
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/tasks/{task_id}:
+    get:
+      tags:
+        - Tasks
+      summary: Get task by ID
+      description: |
+        Get a specific task by ID with ownership verification.
+
+        **User Isolation**:
+        - Only returns task if user_id matches authenticated user
+        - Database query includes: `WHERE id = {task_id} AND user_id = {authenticated_user_id}`
+        - Returns 404 (not 403) if task doesn't exist or user doesn't own it
+        - This prevents revealing task existence to unauthorized users
+      operationId: getTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+          example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Task not found or not owned by user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                not_found:
+                  summary: Task not found
+                  value:
+                    code: TASK_NOT_FOUND
+                    message: Task not found
+                    details: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Tasks
+      summary: Update task
+      description: |
+        Update task title and description with ownership verification.
+
+        **User Isolation**:
+        - Only updates task if user_id matches authenticated user
+        - Returns 404 (not 403) if task doesn't exist or user doesn't own it
+
+        **Validation**:
+        - Title is required and cannot be empty
+        - Title max length: 500 characters
+        - Description max length: 5000 characters
+      operationId: updateTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+          example: 123e4567-e89b-12d3-a456-426614174000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+            examples:
+              valid:
+                summary: Valid task update
+                value:
+                  title: Buy groceries (updated)
+                  description: Milk, eggs, bread, cheese
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          description: Bad request - validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Task not found or not owned by user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Tasks
+      summary: Delete task
+      description: |
+        Delete task with ownership verification.
+
+        **User Isolation**:
+        - Only deletes task if user_id matches authenticated user
+        - Returns 404 (not 403) if task doesn't exist or user doesn't own it
+      operationId: deleteTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+          example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '204':
+          description: Task deleted successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Task not found or not owned by user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/tasks/{task_id}/toggle:
+    patch:
+      tags:
+        - Tasks
+      summary: Toggle task completion
+      description: |
+        Toggle task completion status (false → true or true → false).
+
+        **User Isolation**:
+        - Only toggles task if user_id matches authenticated user
+        - Returns 404 (not 403) if task doesn't exist or user doesn't own it
+      operationId: toggleTask
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+          example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '200':
+          description: Task completion toggled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: Task not found or not owned by user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token obtained from /api/auth/signin endpoint.
+
+        **Format**: `Authorization: Bearer <token>`
+
+        **Token Structure**:
+        - Header: `{ "alg": "HS256", "typ": "JWT" }`
+        - Payload: `{ "user_id": "UUID", "email": "string", "exp": timestamp, "iat": timestamp }`
+        - Signature: HMACSHA256(header + payload, JWT_SECRET)
+
+        **Expiration**: 7 days (604800 seconds)
+
+  schemas:
+    SignupRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address (must be unique)
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: User's password (min 8 characters)
+          example: securepassword123
+
+    SigninRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          description: User's password
+          example: securepassword123
+
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwiZW1haWwiOiJ1c2VyQGV4YW1wbGUuY29tIiwiZXhwIjoxNzM3ODQ5NjAwLCJpYXQiOjE3MzcyNDQ4MDB9.signature_here
+        token_type:
+          type: string
+          enum: [bearer]
+          description: Token type (always 'bearer')
+          example: bearer
+        expires_in:
+          type: integer
+          description: Token expiration in seconds (7 days)
+          example: 604800
+
+    UserResponse:
+      type: object
+      required:
+        - id
+        - email
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: User's unique identifier
+          example: 550e8400-e29b-41d4-a716-446655440000
+        email:
+          type: string
+          format: email
+          description: User's email address
+          example: user@example.com
+        created_at:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: '2026-01-15T10:30:00Z'
+
+    CreateTaskRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          maxLength: 500
+          description: Task title (required, max 500 chars)
+          example: Buy groceries
+        description:
+          type: string
+          maxLength: 5000
+          nullable: true
+          description: Task description (optional, max 5000 chars)
+          example: Milk, eggs, bread
+
+    UpdateTaskRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          maxLength: 500
+          description: Task title (required, max 500 chars)
+          example: Buy groceries (updated)
+        description:
+          type: string
+          maxLength: 5000
+          nullable: true
+          description: Task description (optional, max 5000 chars)
+          example: Milk, eggs, bread, cheese
+
+    TaskResponse:
+      type: object
+      required:
+        - id
+        - user_id
+        - title
+        - is_completed
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Task unique identifier
+          example: 123e4567-e89b-12d3-a456-426614174000
+        user_id:
+          type: string
+          format: uuid
+          description: Owner's user ID
+          example: 550e8400-e29b-41d4-a716-446655440000
+        title:
+          type: string
+          description: Task title
+          example: Buy groceries
+        description:
+          type: string
+          nullable: true
+          description: Task description
+          example: Milk, eggs, bread
+        is_completed:
+          type: boolean
+          description: Task completion status
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          description: Task creation timestamp
+          example: '2026-01-15T10:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          description: Task last update timestamp
+          example: '2026-01-15T10:00:00Z'
+
+    TaskListResponse:
+      type: object
+      required:
+        - tasks
+        - count
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskResponse'
+          description: List of user's tasks
+        count:
+          type: integer
+          description: Total number of tasks
+          example: 2
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code (e.g., INVALID_TOKEN, TOKEN_EXPIRED)
+          example: INVALID_TOKEN
+        message:
+          type: string
+          description: Human-readable error message
+          example: Invalid token
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+          example: {}
+
+  responses:
+    UnauthorizedError:
+      description: Unauthorized - authentication required or token invalid/expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_token:
+              summary: Missing authorization header
+              value:
+                code: MISSING_TOKEN
+                message: Missing authorization header
+                details: {}
+            invalid_format:
+              summary: Invalid authorization format
+              value:
+                code: INVALID_FORMAT
+                message: Invalid authorization format
+                details: {}
+            invalid_token:
+              summary: Invalid token signature
+              value:
+                code: INVALID_TOKEN
+                message: Invalid token
+                details: {}
+            token_expired:
+              summary: Token expired
+              value:
+                code: TOKEN_EXPIRED
+                message: Token expired
+                details: {}
